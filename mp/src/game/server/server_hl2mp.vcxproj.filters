@@ -3562,6 +3562,9 @@
     <ClCompile Include="sdk_logicalentity.cpp">
       <Filter>MyStuff</Filter>
     </ClCompile>
+    <ClCompile Include="sdk_modelentity.cpp">
+      <Filter>MyStuff</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
   </ItemGroup>
