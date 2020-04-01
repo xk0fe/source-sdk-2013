@@ -11,8 +11,12 @@
 #if defined( CLIENT_DLL )
 #include "iprediction.h"
 #include "prediction.h"
+// cin: 070105 - ironsight mode changes
 #include "client_virtualreality.h"
 #include "sourcevr/isourcevirtualreality.h"
+#include "convar.h"
+#include "c_hl2mp_player.h"
+#include "weapon_hl2mpbase.h"
 #else
 #include "vguiscreen.h"
 #endif
@@ -32,6 +36,101 @@ extern ConVar in_forceuser;
 
 #define VIEWMODEL_ANIMATION_PARITY_BITS 3
 #define SCREEN_OVERLAY_MATERIAL "vgui/screens/vgui_overlay"
+
+#if defined( CLIENT_DLL )
+void ExpWpnTestOffset(ConVar *pConVar, char *pszString);
+ConVar   cl_exp_test_wpn_offset("cl_exp_test_wpn_offset", "0", 0, "Tests weapon offsets",
+	(FnChangeCallback_t)ExpWpnTestOffset);
+
+ConVar   cl_exp_test_wpn_offset_x("cl_exp_test_wpn_offset_x", "0");
+ConVar   cl_exp_test_wpn_offset_y("cl_exp_test_wpn_offset_y", "0");
+ConVar   cl_exp_test_wpn_offset_z("cl_exp_test_wpn_offset_z", "0");
+
+ConVar   cl_exp_test_wpn_ori_offset_x("cl_exp_test_wpn_ori_offset_x", "0");
+ConVar   cl_exp_test_wpn_ori_offset_y("cl_exp_test_wpn_ori_offset_y", "0");
+ConVar   cl_exp_test_wpn_ori_offset_z("cl_exp_test_wpn_ori_offset_z", "0");
+
+// cin: 070105 - applies existing weapon offsets when
+// entering test mode (this will not be called upon
+// weapon change, so beware)
+// this mode should only be used for calibrating the
+// ironsighted mode offests for a particular weapon
+void ExpWpnTestOffset(ConVar *pConVar, char *pszString)
+{
+	CBasePlayer *pPlayer = UTIL_PlayerByIndex(engine->GetLocalPlayer());
+	if (pPlayer)
+	{
+		CWeaponHL2MPBase *pWeapon = dynamic_cast<CWeaponHL2MPBase *>(pPlayer->GetActiveWeapon());
+		if (pWeapon)
+		{
+			cl_exp_test_wpn_offset_x.SetValue(pWeapon->GetHL2MPWpnData().m_expOffset.x);
+			cl_exp_test_wpn_offset_y.SetValue(pWeapon->GetHL2MPWpnData().m_expOffset.y);
+			cl_exp_test_wpn_offset_z.SetValue(pWeapon->GetHL2MPWpnData().m_expOffset.z);
+
+			cl_exp_test_wpn_ori_offset_x.SetValue(pWeapon->GetHL2MPWpnData().m_expOriOffset.x);
+			cl_exp_test_wpn_ori_offset_y.SetValue(pWeapon->GetHL2MPWpnData().m_expOriOffset.y);
+			cl_exp_test_wpn_ori_offset_z.SetValue(pWeapon->GetHL2MPWpnData().m_expOriOffset.z);
+		}
+	}
+}
+
+
+// last time ironsighted mode was toggled
+float gIronsightedTime(0.0f);
+
+// I bound this to a key for testing(i.e. bind [ ironsight_toggle)
+CON_COMMAND(ironsight_toggle, "toggles ironsight mode for the current weapon")
+{
+	if (gpGlobals->curtime - gIronsightedTime < 0.5f)
+		return;
+
+	CBasePlayer *pPlayer = UTIL_PlayerByIndex(engine->GetLocalPlayer());
+	if (pPlayer)
+	{
+		C_BaseViewModel  *pVm = pPlayer->GetViewModel();
+		if (pVm)
+		{
+			pPlayer->m_Local.m_iHideHUD ^= HIDEHUD_CROSSHAIR;
+			pVm->m_bExpSighted ^= true;
+			gIronsightedTime = gpGlobals->curtime;
+		}
+	}
+}
+
+void CalcExpWpnOffsets(CBasePlayer *owner, Vector &pos, QAngle &ang)
+{
+	Vector   forward, right, up, offset;
+
+	// this is a simple test mode to help determine the proper values
+	// to place in the weapon script
+	if (cl_exp_test_wpn_offset.GetBool())
+	{
+		ang.x += cl_exp_test_wpn_ori_offset_x.GetFloat();
+		ang.y += cl_exp_test_wpn_ori_offset_y.GetFloat();
+		ang.z += cl_exp_test_wpn_ori_offset_z.GetFloat();
+		offset.Init(cl_exp_test_wpn_offset_x.GetFloat(),
+			cl_exp_test_wpn_offset_y.GetFloat(),
+			cl_exp_test_wpn_offset_z.GetFloat());
+	}
+	else
+	{
+		CWeaponHL2MPBase *pWeapon = dynamic_cast<CWeaponHL2MPBase *>(ToHL2MPPlayer(owner)->GetActiveWeapon());
+		if (pWeapon)
+		{
+			ang += pWeapon->GetHL2MPWpnData().m_expOriOffset;
+			offset = pWeapon->GetHL2MPWpnData().m_expOffset;
+		}
+	}
+
+	// get eye direction angles
+	AngleVectors(ang, &forward, &right, &up);
+
+	// apply the offsets
+	pos += forward   * offset.x;
+	pos += right     * offset.y;
+	pos += up        * offset.z;
+}
+#endif
 
 //-----------------------------------------------------------------------------
 // Purpose: 
@@ -84,6 +183,13 @@ void CBaseViewModel::Spawn( void )
 	Precache( );
 	SetSize( Vector( -8, -4, -2), Vector(8, 4, 2) );
 	SetSolid( SOLID_NONE );
+
+#ifdef CLIENT_DLL
+	// cin: 070105 - ironsighted mode changes
+	m_bExpSighted  = false;
+	m_expFactor    = 0.0f;
+	gIronsightedTime = 0.0f;
+#endif
 }
 
 
@@ -419,6 +525,20 @@ void CBaseViewModel::CalcViewModelView( CBasePlayer *owner, const Vector& eyePos
 		// Let the viewmodel shake at about 10% of the amplitude of the player's view
 		vieweffects->ApplyShake( vmorigin, vmangles, 0.1 );	
 	}
+	// cin: 070105 - ironsighted mode changes
+	// get the wpn offsets
+	CalcExpWpnOffsets(owner, vmorigin, vmangles);
+
+	// get delta time for 1 sec interpolation and interpolate to/from positional offset
+	float delta(gpGlobals->curtime - gIronsightedTime);
+	m_expFactor = (m_bExpSighted) ? 
+		(delta > 1.0f) ? 1.0f : delta :
+		(delta > 1.0f) ? 0.0f : 1.0f - delta;
+	Vector difPos(vmorigin - eyePosition);
+	vmorigin = eyePosition + (difPos * m_expFactor);
+
+	SetLocalOrigin(vmorigin);
+	SetLocalAngles(vmangles);
 #endif
 
 	if( UseVR() )

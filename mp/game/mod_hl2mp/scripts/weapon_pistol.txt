@@ -64,4 +64,10 @@ WeaponData
 				"height"	"24"
 		}
 	}
+	ExpOffset
+	{
+		"x"	"-10"
+		"y"	"-4.5"
+		"z"	"3.5"
+	}
 }

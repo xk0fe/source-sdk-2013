@@ -32,6 +32,8 @@ class CBaseViewModel : public CBaseAnimating, public IHasOwner
 {
 	DECLARE_CLASS( CBaseViewModel, CBaseAnimating );
 public:
+	bool m_bExpSighted;
+	float m_expFactor;
 
 	DECLARE_NETWORKCLASS();
 	DECLARE_PREDICTABLE();

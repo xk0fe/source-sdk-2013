@@ -27,7 +27,8 @@ public:
 
 
 public:
-
+	Vector m_expOffset;
+	QAngle m_expOriOffset;
 	int m_iPlayerDamage;
 };
 
